@@ -12,6 +12,17 @@ on:
       git-short-hash:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      build-type:
+        required: true
+        type: string
+      app-version:
+        required: true
+        type: string
+      git-short-hash:
+        required: true
+        type: string
 
 permissions:
   actions: write
