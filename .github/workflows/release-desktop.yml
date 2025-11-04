@@ -148,11 +148,6 @@ jobs:
           HOIST_NODE_MODULES: 1
           NODE_OPTIONS: --max-old-space-size=14384
 
-      - name: signing DMG
-        if: ${{ matrix.spec.platform == 'darwin' }}
-        run: |
-          codesign --force --sign "Developer ID Application: TOEVERYTHING PTE. LTD." packages/frontend/apps/electron/out/${{ env.BUILD_TYPE }}/make/AFFiNE.dmg
-
       - name: Save artifacts (mac)
         if: ${{ matrix.spec.platform == 'darwin' }}
         run: |
