@@ -12,6 +12,17 @@ on:
       git-short-hash:
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      build-type:
+        required: true
+        type: string
+      app-version:
+        required: true
+        type: string
+      git-short-hash:
+        required: true
+        type: string
 
 permissions:
   actions: write
@@ -79,9 +90,6 @@ jobs:
     needs: before-make
     environment: ${{ inputs.build-type }}
     env:
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       SKIP_GENERATE_ASSETS: 1
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: 'affine'
@@ -116,13 +124,6 @@ jobs:
       - name: Build Desktop Layers
         run: yarn affine @affine/electron build
 
-      - name: Signing By Apple Developer ID
-        if: ${{ matrix.spec.platform == 'darwin' }}
-        uses: apple-actions/import-codesign-certs@v5
-        with:
-          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
-          p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
-
       - name: Install additional dependencies on Linux
         if: ${{ matrix.spec.platform == 'linux' }}
         run: |
@@ -146,11 +147,6 @@ jobs:
           SKIP_WEB_BUILD: 1
           HOIST_NODE_MODULES: 1
           NODE_OPTIONS: --max-old-space-size=14384
-
-      - name: signing DMG
-        if: ${{ matrix.spec.platform == 'darwin' }}
-        run: |
-          codesign --force --sign "Developer ID Application: TOEVERYTHING PTE. LTD." packages/frontend/apps/electron/out/${{ env.BUILD_TYPE }}/make/AFFiNE.dmg
 
       - name: Save artifacts (mac)
         if: ${{ matrix.spec.platform == 'darwin' }}
@@ -273,144 +269,8 @@ jobs:
             archive.zip
             !**/*.map
 
-  sign-packaged-artifacts-windows_x64:
-    needs: package-distribution-windows
-    uses: ./.github/workflows/windows-signer.yml
-    with:
-      files: ${{ needs.package-distribution-windows.outputs.FILES_TO_BE_SIGNED_x64 }}
-      artifact-name: packaged-win32-x64
-
-  sign-packaged-artifacts-windows_arm64:
-    needs: package-distribution-windows
-    uses: ./.github/workflows/windows-signer.yml
-    with:
-      files: ${{ needs.package-distribution-windows.outputs.FILES_TO_BE_SIGNED_arm64 }}
-      artifact-name: packaged-win32-arm64
-
-  make-windows-installer:
-    needs:
-      - sign-packaged-artifacts-windows_x64
-      - sign-packaged-artifacts-windows_arm64
-    strategy:
-      fail-fast: false
-      matrix:
-        spec:
-          - platform: win32
-            arch: x64
-          - platform: win32
-            arch: arm64
-    runs-on: windows-latest
-    outputs:
-      FILES_TO_BE_SIGNED_x64: ${{ steps.get_files_to_be_signed.outputs.FILES_TO_BE_SIGNED_x64 }}
-      FILES_TO_BE_SIGNED_arm64: ${{ steps.get_files_to_be_signed.outputs.FILES_TO_BE_SIGNED_arm64 }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup Version
-        uses: ./.github/actions/setup-version
-        with:
-          app-version: ${{ inputs.app-version }}
-      - name: Setup Node.js
-        timeout-minutes: 10
-        uses: ./.github/actions/setup-node
-        with:
-          extra-flags: workspaces focus @affine/electron @affine/monorepo
-          hard-link-nm: false
-          nmHoistingLimits: workspaces
-        env:
-          npm_config_arch: ${{ matrix.spec.arch }}
-      - name: Download and overwrite packaged artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: signed-packaged-${{ matrix.spec.platform }}-${{ matrix.spec.arch }}
-          path: .
-      - name: unzip file
-        run: Expand-Archive -Path signed.zip -DestinationPath packages/frontend/apps/electron/out
-
-      - name: Make squirrel.windows installer
-        run: yarn affine @affine/electron make-squirrel --platform=${{ matrix.spec.platform }} --arch=${{ matrix.spec.arch }}
-
-      - name: Make nsis.windows installer
-        run: yarn affine @affine/electron make-nsis --platform=${{ matrix.spec.platform }} --arch=${{ matrix.spec.arch }}
-
-      - name: Zip artifacts for faster upload
-        run: Compress-Archive -CompressionLevel Fastest -Path packages/frontend/apps/electron/out/${{ env.BUILD_TYPE }}/make/* -DestinationPath archive.zip
-
-      - name: get all files to be signed
-        id: get_files_to_be_signed
-        run: |
-          Set-Variable -Name FILES_TO_BE_SIGNED -Value ((Get-ChildItem -Path packages/frontend/apps/electron/out/${{ env.BUILD_TYPE }}/make -Recurse -File | Where-Object { $_.Extension -in @(".exe", ".node", ".dll", ".msi") } | ForEach-Object { '"' + $_.FullName.Replace((Get-Location).Path + '\packages\frontend\apps\electron\out\${{ env.BUILD_TYPE }}\make\', '') + '"' }) -join ' ')
-          "FILES_TO_BE_SIGNED_${{ matrix.spec.arch }}=$FILES_TO_BE_SIGNED" >> $env:GITHUB_OUTPUT
-          echo $FILES_TO_BE_SIGNED
-
-      - name: Save installer for signing
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-${{ matrix.spec.platform }}-${{ matrix.spec.arch }}
-          path: archive.zip
-
-  sign-installer-artifacts-windows-x64:
-    needs: make-windows-installer
-    uses: ./.github/workflows/windows-signer.yml
-    with:
-      files: ${{ needs.make-windows-installer.outputs.FILES_TO_BE_SIGNED_x64 }}
-      artifact-name: installer-win32-x64
-
-  sign-installer-artifacts-windows-arm64:
-    needs: make-windows-installer
-    uses: ./.github/workflows/windows-signer.yml
-    with:
-      files: ${{ needs.make-windows-installer.outputs.FILES_TO_BE_SIGNED_arm64 }}
-      artifact-name: installer-win32-arm64
-
-  finalize-installer-windows:
-    needs:
-      [
-        sign-installer-artifacts-windows-x64,
-        sign-installer-artifacts-windows-arm64,
-        before-make,
-      ]
-    strategy:
-      fail-fast: false
-      matrix:
-        spec:
-          - runner: windows-latest
-            platform: win32
-            arch: x64
-          - runner: windows-latest
-            platform: win32
-            arch: arm64
-    runs-on: ${{ matrix.spec.runner }}
-    steps:
-      - name: Download and overwrite installer artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: signed-installer-${{ matrix.spec.platform }}-${{ matrix.spec.arch }}
-          path: .
-      - name: unzip file
-        run: Expand-Archive -Path signed.zip -DestinationPath packages/frontend/apps/electron/out/${{ env.BUILD_TYPE }}/make
-
-      - name: Save artifacts
-        run: |
-          mkdir -p builds
-          mv packages/frontend/apps/electron/out/*/make/zip/win32/${{ matrix.spec.arch }}/AFFiNE*-win32-${{ matrix.spec.arch }}-*.zip ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.zip
-          mv packages/frontend/apps/electron/out/*/make/squirrel.windows/${{ matrix.spec.arch }}/*.exe ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.exe
-          mv packages/frontend/apps/electron/out/*/make/nsis.windows/${{ matrix.spec.arch }}/*.exe ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.nsis.exe
-
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.zip
-            ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.exe
-            ./builds/affine-${{ env.RELEASE_VERSION }}-${{ env.BUILD_TYPE }}-windows-${{ matrix.spec.arch }}.nsis.exe
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: affine-${{ matrix.spec.platform }}-${{ matrix.spec.arch }}-builds
-          path: builds
-
   release:
-    needs: [before-make, make-distribution, finalize-installer-windows]
+    needs: [before-make, make-distribution]
     runs-on: ubuntu-latest
 
     steps:
@@ -430,16 +290,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: affine-darwin-arm64-builds
-          path: ./release
-      - name: Download Artifacts (windows-x64)
-        uses: actions/download-artifact@v4
-        with:
-          name: affine-win32-x64-builds
-          path: ./release
-      - name: Download Artifacts (windows-arm64)
-        uses: actions/download-artifact@v4
-        with:
-          name: affine-win32-arm64-builds
           path: ./release
       - name: Download Artifacts (linux-x64)
         uses: actions/download-artifact@v4
