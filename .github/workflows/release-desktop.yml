@@ -79,9 +79,6 @@ jobs:
     needs: before-make
     environment: ${{ inputs.build-type }}
     env:
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       SKIP_GENERATE_ASSETS: 1
       SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
       SENTRY_PROJECT: 'affine'
@@ -115,13 +112,6 @@ jobs:
 
       - name: Build Desktop Layers
         run: yarn affine @affine/electron build
-
-      - name: Signing By Apple Developer ID
-        if: ${{ matrix.spec.platform == 'darwin' }}
-        uses: apple-actions/import-codesign-certs@v5
-        with:
-          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
-          p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
 
       - name: Install additional dependencies on Linux
         if: ${{ matrix.spec.platform == 'linux' }}
